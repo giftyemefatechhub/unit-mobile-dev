@@ -19,6 +19,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
 
+// Robel work start
 // Data class for Device (can be moved to a separate Device.kt file)
 data class Device(
     val id: Int,
@@ -30,7 +31,7 @@ data class Device(
 )
 
 // change this for connection to remote server IPV4 address
-const val BASE_URL = "http://192.168.50.252:5001"
+const val BASE_URL = "http://192.168.0.100:5000"
 
 class MainActivity : ComponentActivity() {
 
@@ -62,7 +63,7 @@ class MainActivity : ComponentActivity() {
                         isLoggedIn = true
                     })
                 }
-            }
+            }// Injected login/auth flow (Gifty's logic)
         }
     }
 
@@ -79,12 +80,9 @@ class MainActivity : ComponentActivity() {
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(Unit) {
-            devices = fetchDevices()
-
-            SocketManager.onUpdate {
-                scope.launch {
-                    devices = fetchDevices()
-                }
+            // Instead of fetching once, poll every 5 seconds to keep UI updated.
+            while (true) {
+                devices = fetchDevices()
             }
         }
 
@@ -127,7 +125,8 @@ class MainActivity : ComponentActivity() {
                                     statusMessage = result
                                     SocketManager.emitUpdate(device.name, !device.status)
 
-                                    CoroutineScope(Dispatchers.IO).launch {
+                                    // We can do an immediate fetch if you want faster reflection:
+                                    scope.launch(Dispatchers.IO) {
                                         val updatedDevices = fetchDevices()
                                         withContext(Dispatchers.Main) {
                                             devices = updatedDevices
@@ -146,7 +145,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
 
     private suspend fun fetchDevices(): List<Device> = withContext(Dispatchers.IO) {
         val request = Request.Builder()
@@ -206,4 +204,4 @@ class MainActivity : ComponentActivity() {
             }
         })
     }
-}
+} // Robel work end
