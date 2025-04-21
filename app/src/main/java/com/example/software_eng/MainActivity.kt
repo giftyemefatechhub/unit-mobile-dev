@@ -6,6 +6,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -75,14 +79,23 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun DeviceUI(onLogout: () -> Unit) {
-        var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var showAddDialog by remember { mutableStateOf(false) }
         var statusMessage by remember { mutableStateOf("Loading...") }
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(Unit) {
-            // Instead of fetching once, poll every 5 seconds to keep UI updated.
-            while (true) {
-                devices = fetchDevices()
+            // initial load & subscribe to updates
+            allDevices = fetchDevices()
+            SocketManager.onUpdate {
+                scope.launch {
+                    allDevices = fetchDevices()
+                    // keep selectedDevices up to date
+                    selectedDevices = selectedDevices.map { sel ->
+                        allDevices.firstOrNull { it.id == sel.id } ?: sel
+                    }
+                }
             }
         }
 
@@ -91,6 +104,9 @@ class MainActivity : ComponentActivity() {
                 TopAppBar(
                     title = { Text("Devices") },
                     actions = {
+                        IconButton(onClick = { showAddDialog = true }) {
+                            Icon(Icons.Default.Add, contentDescription = "Add Device")
+                        }
                         Button(
                             onClick = onLogout,
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
@@ -107,9 +123,12 @@ class MainActivity : ComponentActivity() {
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
+                if (selectedDevices.isEmpty()) {
+                    Text("No devices added. Tap + to add one.")
+                }
                 Spacer(modifier = Modifier.height(12.dp))
 
-                devices.forEach { device ->
+                selectedDevices.forEach { device ->
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -124,12 +143,13 @@ class MainActivity : ComponentActivity() {
                                 toggleDevice(device.id, device.name, device.status) { result ->
                                     statusMessage = result
                                     SocketManager.emitUpdate(device.name, !device.status)
-
-                                    // We can do an immediate fetch if you want faster reflection:
+                                    // immediate refresh of this one device
                                     scope.launch(Dispatchers.IO) {
-                                        val updatedDevices = fetchDevices()
+                                        val updated = fetchDevices().first { it.id == device.id }
                                         withContext(Dispatchers.Main) {
-                                            devices = updatedDevices
+                                            selectedDevices = selectedDevices.map {
+                                                if (it.id == updated.id) updated else it
+                                            }
                                         }
                                     }
                                 }
@@ -142,6 +162,38 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(text = "Status: $statusMessage")
+            }
+
+            // Add‐Device Dialog
+            if (showAddDialog) {
+                AlertDialog(
+                    onDismissRequest = { showAddDialog = false },
+                    title = { Text("Add a Device") },
+                    text = {
+                        LazyColumn {
+                            items(allDevices.filter { dev -> selectedDevices.none { it.id == dev.id } }) { dev ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(dev.name, modifier = Modifier.weight(1f))
+                                    Button(onClick = {
+                                        selectedDevices = selectedDevices + dev
+                                    }) {
+                                        Text("Add")
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { showAddDialog = false }) {
+                            Text("Done")
+                        }
+                    }
+                )
             }
         }
     }
@@ -156,22 +208,20 @@ class MainActivity : ComponentActivity() {
             if (!response.isSuccessful) return@withContext emptyList()
             val bodyString = response.body?.string() ?: return@withContext emptyList()
             val root = JSONObject(bodyString)
-            val deviceArray = root.getJSONObject("data").getJSONArray("devices")
-            val result = mutableListOf<Device>()
-            for (i in 0 until deviceArray.length()) {
-                val obj = deviceArray.getJSONObject(i)
-                result.add(
-                    Device(
-                        id = obj.getInt("id"),
-                        name = obj.getString("name"),
-                        description = obj.getString("description"),
-                        status = obj.getBoolean("status"),
-                        type = obj.getString("type"),
-                        value = obj.getDouble("value")
-                    )
+            val arr = root.getJSONObject("data").getJSONArray("devices")
+            val list = mutableListOf<Device>()
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                list += Device(
+                    id = o.getInt("id"),
+                    name = o.getString("name"),
+                    description = o.getString("description"),
+                    status = o.getBoolean("status"),
+                    type = o.getString("type"),
+                    value = o.getDouble("value")
                 )
             }
-            result
+            list
         }
     }
 
@@ -182,16 +232,15 @@ class MainActivity : ComponentActivity() {
             put("status", newStatus)
         }
         Log.d("ToggleDevice", "Sending JSON to /device/$id: $json")
-        println("PATCH Payload for /device/$id: $json")
 
-        val requestBody = json.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
+        val reqBody = json.toString().toRequestBody("application/json".toMediaType())
+        val req = Request.Builder()
             .url("$BASE_URL/device/$id")
-            .patch(requestBody)
+            .patch(reqBody)
             .addHeader("Content-Type", "application/json")
             .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 onResult("Failed: ${e.message}")
                 Log.e("ToggleDevice", "Request failed", e)
