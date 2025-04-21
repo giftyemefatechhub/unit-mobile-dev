@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -55,19 +57,25 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         setContent {
-            Software_engTheme {
+            // state to hold current theme mode
+            var darkMode by remember { mutableStateOf(false) }
+
+            Software_engTheme(darkTheme = darkMode) {
                 // 🔐 Injected login/auth flow (Gifty's logic)
                 var isLoggedIn by remember { mutableStateOf(false) }
 
                 if (isLoggedIn) {
-                    DeviceUI(onLogout = { isLoggedIn = false })
-
+                    DeviceUI(
+                        onLogout = { isLoggedIn = false },
+                        darkMode = darkMode,
+                        onToggleTheme = { darkMode = !darkMode }
+                    )
                 } else {
                     AuthScreen(onLoginSuccess = {
                         isLoggedIn = true
                     })
                 }
-            }// Injected login/auth flow (Gifty's logic)
+            }
         }
     }
 
@@ -78,7 +86,11 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun DeviceUI(onLogout: () -> Unit) {
+    fun DeviceUI(
+        onLogout: () -> Unit,
+        darkMode: Boolean,
+        onToggleTheme: () -> Unit
+    ) {
         var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var showAddDialog by remember { mutableStateOf(false) }
@@ -104,8 +116,15 @@ class MainActivity : ComponentActivity() {
                 TopAppBar(
                     title = { Text("Devices") },
                     actions = {
+                        // theme toggle button
+                        IconButton(onClick = onToggleTheme) {
+                            Icon(
+                                imageVector = if (darkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                contentDescription = "Toggle theme"
+                            )
+                        }
                         IconButton(onClick = { showAddDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "Add Device")
+                            Icon(Icons.Default.Add, "Add Device")
                         }
                         Button(
                             onClick = onLogout,
