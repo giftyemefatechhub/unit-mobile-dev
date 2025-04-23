@@ -8,6 +8,9 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -15,17 +18,24 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.software_eng.ui.theme.Software_engTheme
 import kotlinx.coroutines.*
 import okhttp3.*
-import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONObject
 import java.io.IOException
 import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
+
 
 // ─────────── Robel work start ───────────
 data class Device(
@@ -37,7 +47,7 @@ data class Device(
     val value: Double
 )
 
-const val BASE_URL = "http://192.168.0.100:5001"
+const val BASE_URL  = "http://192.168.0.100:5001"
 private const val REQ_VOICE = 42              // voice recognizer request-code
 
 class MainActivity : ComponentActivity() {
@@ -125,7 +135,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
+    // ─────────── (Robel) ───────────
     override fun onDestroy() {
         super.onDestroy()
         SocketManager.disconnect()
@@ -157,7 +167,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             while (true) {
-                delay(3000)
+                delay(3.seconds)
                 val latest = fetchDevices().also { cachedDevices = it }
                 if (latest != allDevices) {
                     allDevices = latest
@@ -167,11 +177,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-
+        // ─────────── (Robel) ───────────
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Devices") },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Filled.Home,          // ✅ always present
+                                contentDescription = null
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Smart-Home")
+                        }
+                    },
                     actions = {
                         IconButton(onClick = onToggleTheme) {
                             Icon(
@@ -179,88 +198,151 @@ class MainActivity : ComponentActivity() {
                                 contentDescription = "Toggle theme"
                             )
                         }
-                        IconButton(onClick = { launchVoice() }) {
-                            Icon(Icons.Filled.Mic, "Voice Command")
-                        }
                         IconButton(onClick = { showAddDialog = true }) {
                             Icon(Icons.Default.Add, "Add Device")
                         }
-                        Button(
+                        OutlinedButton(
                             onClick = onLogout,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
                             )
-                        ) { Text("Logout", color = MaterialTheme.colorScheme.onPrimary) }
+                        ) { Text("Logout") }
                     }
                 )
             },
+            floatingActionButton = {
+                // modern FAB to launch voice directly
+                FloatingActionButton(onClick = { launchVoice() }) {
+                    Icon(Icons.Filled.Mic, null)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             modifier = Modifier.fillMaxSize()
         ) { paddingValues ->
             Column(
-                Modifier.padding(paddingValues).padding(16.dp)
+                Modifier
+                    .padding(paddingValues)
+                    .padding(16.dp)
             ) {
-                if (selectedDevices.isEmpty()) {
-                    Text("No devices added. Tap + to add one.")
+                AnimatedVisibility(
+                    visible = selectedDevices.isEmpty(),
+                    enter   = fadeIn() + slideInVertically(),
+                    exit    = fadeOut()
+                ) {
+                    Text("No devices added. Tap + to add one.",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
                 }
+
                 Spacer(Modifier.height(12.dp))
 
-                selectedDevices.forEach { device ->
-                    Card(
-                        Modifier.fillMaxWidth().padding(vertical = 6.dp)
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("Name: ${device.name}")
-                            Text("Type: ${device.type}")
-                            Text("Status: ${if (device.status) "ON" else "OFF"}")
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = {
-                                toggleDevice(device.id, device.name, device.status) { result ->
-                                    statusMessage = result
-                                    SocketManager.emitUpdate(device.name, !device.status)
-                                    scope.launch(Dispatchers.IO) {
-                                        val upd = fetchDevices().first { it.id == device.id }
-                                        withContext(Dispatchers.Main) {
-                                            selectedDevices = selectedDevices.map {
-                                                if (it.id == upd.id) upd else it
-                                            }
-                                        }
-                                    }
+                // modern list with LazyColumn
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(selectedDevices) { device ->
+                        DeviceCard(device = device,
+                            onToggle = { toToggle ->
+                                toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
+                                    statusMessage = it
                                 }
-                            }) { Text("Toggle") }
-                        }
+                                SocketManager.emitUpdate(toToggle.name, !toToggle.status)
+                                // optimistic UI
+                                selectedDevices = selectedDevices.map {
+                                    if (it.id == toToggle.id) it.copy(status = !it.status)
+                                    else it
+                                }
+                            })
                     }
                 }
+
                 Spacer(Modifier.height(12.dp))
                 Text("Status: $statusMessage")
             }
 
             // dialog (unchanged)
             if (showAddDialog) {
-                AlertDialog(
-                    onDismissRequest = { showAddDialog = false },
-                    title = { Text("Add a Device") },
-                    text = {
-                        LazyColumn {
-                            items(allDevices.filter { dev ->
-                                selectedDevices.none { it.id == dev.id }
-                            }) { dev ->
-                                Row(
-                                    Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Text(dev.name, Modifier.weight(1f))
-                                    Button(onClick = { selectedDevices += dev }) { Text("Add") }
-                                }
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        TextButton(onClick = { showAddDialog = false }) { Text("Done") }
+                AddDeviceDialog(
+                    allDevices       = allDevices,
+                    selectedDevices  = selectedDevices,
+                    onAdd            = { selectedDevices += it },
+                    onDismiss        = { showAddDialog = false }
+                )
+            }
+        }
+    }
+
+    // ─────────── (Robel) ───────────
+    @Composable
+    private fun DeviceCard(device: Device, onToggle: (Device) -> Unit) {
+        val cardColor = if (device.status)
+            MaterialTheme.colorScheme.primaryContainer
+        else
+            MaterialTheme.colorScheme.surfaceContainerLow
+
+        Card(
+            colors  = CardDefaults.cardColors(containerColor = cardColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            modifier  = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(device.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("${device.type} • ${device.value}", style = MaterialTheme.typography.bodySmall)
+                }
+
+                // switch looks more “smart-home” than a plain button
+                Switch(
+                    checked = device.status,
+                    onCheckedChange = { onToggle(device) },
+                    thumbContent = if (device.status) {
+                        { Icon(Icons.Filled.Check, null, Modifier.size(12.dp)) }
+                    } else {
+                        { Icon(Icons.Filled.Close, null, Modifier.size(12.dp)) }
                     }
                 )
             }
         }
     }
+    // ─────────── (Robel) ───────────
+    @Composable
+    private fun AddDeviceDialog(
+        allDevices: List<Device>,
+        selectedDevices: List<Device>,
+        onAdd: (Device) -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Add a Device") },
+            text = {
+                LazyColumn {
+                    items(allDevices.filter { dev ->
+                        selectedDevices.none { it.id == dev.id }
+                    }) { dev ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onAdd(dev) }
+                                .padding(vertical = 10.dp, horizontal = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment     = Alignment.CenterVertically
+                        ) {
+                            Text(dev.name, Modifier.weight(1f))
+                            Icon(Icons.Filled.AddCircle, null)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("Done") }
+            }
+        )
+    }
+    // ───────────────────────────────────
 
     // ─────────── network helpers (Robel) ───────────
     private suspend fun fetchDevices(): List<Device> = withContext(Dispatchers.IO) {
@@ -283,7 +365,7 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
+    // ─────────── (Robel) ───────────
     private fun toggleDevice(
         id: Int,
         deviceName: String,
