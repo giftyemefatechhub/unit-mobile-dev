@@ -5,7 +5,7 @@ import io.socket.client.IO
 import io.socket.client.Socket
 import org.json.JSONObject
 
-
+// Anne-Claire work start
 object SocketManager {
     //these two variables just basically connects socket to the server
     //the deviceupdatecallback allows the UI to react to updates pretty much
@@ -15,7 +15,7 @@ object SocketManager {
     fun connect() {
         try {
             //IP here to change to IP of host server
-            socket = IO.socket("http://192.168.50.252:5001")
+            socket = IO.socket("http://192.168.0.100:5000")
             socket.on(Socket.EVENT_CONNECT) {
                 //just checking to make sure its working right in the logcat
                 Log.d("SocketIO", "connected")
@@ -57,4 +57,4 @@ object SocketManager {
             socket.off()
         }
     }
-}
+} // Anne-Claire work end

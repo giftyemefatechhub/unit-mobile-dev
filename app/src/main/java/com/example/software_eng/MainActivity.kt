@@ -1,25 +1,41 @@
 package com.example.software_eng
 
+import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.*
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.software_eng.ui.theme.Software_engTheme
 import kotlinx.coroutines.*
 import okhttp3.*
-import okhttp3.logging.HttpLoggingInterceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.time.Duration.Companion.seconds
 
-// Data class for Device (can be moved to a separate Device.kt file)
+// ─────────── Robel work start ───────────
 data class Device(
     val id: Int,
     val name: String,
@@ -29,38 +45,100 @@ data class Device(
     val value: Double
 )
 
-// change this for connection to remote server IPV4 address
-const val BASE_URL = "http://192.168.50.252:5001"
+const val BASE_URL = "http://192.168.0.32:5001"
+private const val REQ_VOICE = 42
+
+val activityLog = mutableStateListOf<String>()
+
+fun getCurrentTime(): String {
+    return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+}
 
 class MainActivity : ComponentActivity() {
 
-    private val loggingInterceptor = HttpLoggingInterceptor().apply {
-        level = HttpLoggingInterceptor.Level.BODY
-    }
+    private var cachedDevices: List<Device> = emptyList()
 
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .addInterceptor(loggingInterceptor)
-        .build()
+        .addInterceptor(HttpLoggingInterceptor().apply {
+            level = HttpLoggingInterceptor.Level.BODY
+        }).build()
+
+    private fun launchVoice() {
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Say: device <name> on/off")
+        }
+        startActivityForResult(i, REQ_VOICE)
+    }
+
+    override fun onActivityResult(req: Int, res: Int, data: Intent?) {
+        super.onActivityResult(req, res, data)
+        if (req != REQ_VOICE || res != Activity.RESULT_OK) return
+        val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()?.lowercase(Locale.getDefault()) ?: return
+        Log.d("Voice", "heard → $spoken")
+        handleVoice(spoken)
+    }
+
+    private fun handleVoice(text: String) {
+        val parts = text.split("\\s+".toRegex()).filter { it.isNotEmpty() }
+        if (parts.isEmpty() || parts[0] != "device" || parts.size < 2) return
+
+        val desiredStatus = when (parts.last()) {
+            "on" -> true
+            "off" -> false
+            else -> return
+        }
+
+        val spokenName = if (parts.size == 2) "device"
+        else parts.subList(1, parts.lastIndex).joinToString(" ")
+
+        val key = spokenName.lowercase().replace("\\s+".toRegex(), "")
+        val dev = cachedDevices.firstOrNull {
+            it.name.lowercase().replace("\\s+".toRegex(), "") == key
+        } ?: run { Log.d("Voice", "No match for $spokenName"); return }
+
+        if (dev.status == desiredStatus) {
+            Log.d("Voice", "${dev.name} already ${if (desiredStatus) "ON" else "OFF"}")
+            return
+        }
+
+        Log.d("Voice", "Toggling ${dev.name} → ${if (desiredStatus) "ON" else "OFF"}")
+        toggleDevice(dev.id, dev.name, dev.status) { Log.d("Voice", it) }
+        SocketManager.emitUpdate(dev.name, desiredStatus)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // -> Keep socket manager as is
         SocketManager.connect()
-
         enableEdgeToEdge()
+
         setContent {
-            Software_engTheme {
-                // 🔐 Injected login/auth flow (Gifty's logic)
-                var isLoggedIn by remember { mutableStateOf(false) }
+            var darkMode by remember { mutableStateOf(false) }
+            var isLoggedIn by remember { mutableStateOf(false) }
+            var showActivityLog by remember { mutableStateOf(false) }
 
+            Software_engTheme(darkTheme = darkMode) {
                 if (isLoggedIn) {
-                    DeviceUI(onLogout = { isLoggedIn = false })
-
+                    if (showActivityLog) {
+                        ActivityLogScreen { showActivityLog = false }
+                    } else {
+                        DeviceUI(
+                            onLogout = { isLoggedIn = false },
+                            darkMode = darkMode,
+                            onToggleTheme = { darkMode = !darkMode },
+                            onShowActivityLog = { showActivityLog = true }
+                        )
+                    }
                 } else {
-                    AuthScreen(onLoginSuccess = {
-                        isLoggedIn = true
-                    })
+                    AuthScreen(
+                        onLoginSuccess = {
+                            isLoggedIn = true
+                            activityLog.add("Logged in at ${getCurrentTime()}")
+                        }
+                    )
                 }
             }
         }
@@ -73,17 +151,36 @@ class MainActivity : ComponentActivity() {
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
-    fun DeviceUI(onLogout: () -> Unit) {
-        var devices by remember { mutableStateOf<List<Device>>(emptyList()) }
+    fun DeviceUI(
+        onLogout: () -> Unit,
+        darkMode: Boolean,
+        onToggleTheme: () -> Unit,
+        onShowActivityLog: () -> Unit
+    ) {
+        var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var showAddDialog by remember { mutableStateOf(false) }
         var statusMessage by remember { mutableStateOf("Loading...") }
         val scope = rememberCoroutineScope()
 
         LaunchedEffect(Unit) {
-            devices = fetchDevices()
-
+            allDevices = fetchDevices().also { cachedDevices = it }
             SocketManager.onUpdate {
                 scope.launch {
-                    devices = fetchDevices()
+                    allDevices = fetchDevices().also { cachedDevices = it }
+                    selectedDevices = selectedDevices.map { sel ->
+                        allDevices.firstOrNull { it.id == sel.id } ?: sel
+                    }
+                }
+            }
+            while (true) {
+                delay(3.seconds)
+                val latest = fetchDevices().also { cachedDevices = it }
+                if (latest != allDevices) {
+                    allDevices = latest
+                    selectedDevices = selectedDevices.map { sel ->
+                        latest.firstOrNull { it.id == sel.id } ?: sel
+                    }
                 }
             }
         }
@@ -91,119 +188,230 @@ class MainActivity : ComponentActivity() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text("Devices") },
-                    actions = {
-                        Button(
-                            onClick = onLogout,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                        ) {
-                            Text("Logout", color = MaterialTheme.colorScheme.onPrimary)
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Filled.Home, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Smart-Home")
                         }
+                    },
+                    actions = {
+                        IconButton(onClick = onToggleTheme) {
+                            Icon(
+                                if (darkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                                contentDescription = "Toggle theme"
+                            )
+                        }
+                        IconButton(onClick = onShowActivityLog) {
+                            Icon(Icons.Default.List, "Activity Log")
+                        }
+                        IconButton(onClick = { showAddDialog = true }) {
+                            Icon(Icons.Default.Add, "Add Device")
+                        }
+                        OutlinedButton(
+                            onClick = onLogout,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) { Text("Logout") }
                     }
                 )
             },
+            floatingActionButton = {
+                FloatingActionButton(onClick = { launchVoice() }) {
+                    Icon(Icons.Filled.Mic, null)
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
             modifier = Modifier.fillMaxSize()
         ) { paddingValues ->
             Column(
-                modifier = Modifier
+                Modifier
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
-                Spacer(modifier = Modifier.height(12.dp))
+                AnimatedVisibility(
+                    visible = selectedDevices.isEmpty(),
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut()
+                ) {
+                    Text(
+                        "No devices added. Tap + to add one.",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
+                }
 
-                devices.forEach { device ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text("Name: ${device.name}")
-                            Text("Type: ${device.type}")
-                            Text("Status: ${if (device.status) "ON" else "OFF"}")
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Button(onClick = {
-                                toggleDevice(device.id, device.name, device.status) { result ->
-                                    statusMessage = result
-                                    SocketManager.emitUpdate(device.name, !device.status)
+                Spacer(Modifier.height(12.dp))
 
-                                    CoroutineScope(Dispatchers.IO).launch {
-                                        val updatedDevices = fetchDevices()
-                                        withContext(Dispatchers.Main) {
-                                            devices = updatedDevices
-                                        }
-                                    }
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(selectedDevices) { device ->
+                        DeviceCard(device = device,
+                            onToggle = { toToggle ->
+                                toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
+                                    statusMessage = it
                                 }
-                            }) {
-                                Text("Toggle")
-                            }
-                        }
+                                SocketManager.emitUpdate(toToggle.name, !toToggle.status)
+                                selectedDevices = selectedDevices.map {
+                                    if (it.id == toToggle.id) it.copy(status = !it.status)
+                                    else it
+                                }
+                                activityLog.add("Toggled ${toToggle.name} to ${if (!toToggle.status) "ON" else "OFF"} at ${getCurrentTime()}")
+                            })
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(text = "Status: $statusMessage")
+                Spacer(Modifier.height(12.dp))
+                Text("Status: $statusMessage")
             }
-        }
-    }
 
-
-    private suspend fun fetchDevices(): List<Device> = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url("$BASE_URL/device/all")
-            .get()
-            .build()
-
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return@withContext emptyList()
-            val bodyString = response.body?.string() ?: return@withContext emptyList()
-            val root = JSONObject(bodyString)
-            val deviceArray = root.getJSONObject("data").getJSONArray("devices")
-            val result = mutableListOf<Device>()
-            for (i in 0 until deviceArray.length()) {
-                val obj = deviceArray.getJSONObject(i)
-                result.add(
-                    Device(
-                        id = obj.getInt("id"),
-                        name = obj.getString("name"),
-                        description = obj.getString("description"),
-                        status = obj.getBoolean("status"),
-                        type = obj.getString("type"),
-                        value = obj.getDouble("value")
-                    )
+            if (showAddDialog) {
+                AddDeviceDialog(
+                    allDevices = allDevices,
+                    selectedDevices = selectedDevices,
+                    onAdd = { selectedDevices += it },
+                    onDismiss = { showAddDialog = false }
                 )
             }
-            result
         }
     }
 
-    private fun toggleDevice(id: Int, deviceName: String, currentStatus: Boolean, onResult: (String) -> Unit) {
+    @Composable
+    private fun DeviceCard(device: Device, onToggle: (Device) -> Unit) {
+        val cardColor = if (device.status)
+            MaterialTheme.colorScheme.primaryContainer
+        else
+            MaterialTheme.colorScheme.surfaceContainerLow
+
+        Card(
+            colors = CardDefaults.cardColors(containerColor = cardColor),
+            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(device.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("${device.type} • ${device.value}", style = MaterialTheme.typography.bodySmall)
+                }
+
+                Switch(
+                    checked = device.status,
+                    onCheckedChange = { onToggle(device) },
+                    thumbContent = {
+                        Icon(
+                            if (device.status) Icons.Filled.Check else Icons.Filled.Close,
+                            null,
+                            Modifier.size(12.dp)
+                        )
+                    }
+                )
+            }
+        }
+    }
+
+    @Composable
+    private fun AddDeviceDialog(
+        allDevices: List<Device>,
+        selectedDevices: List<Device>,
+        onAdd: (Device) -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Add a Device") },
+            text = {
+                LazyColumn {
+                    items(allDevices.filter { dev ->
+                        selectedDevices.none { it.id == dev.id }
+                    }) { dev ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onAdd(dev) }
+                                .padding(vertical = 10.dp, horizontal = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(dev.name, Modifier.weight(1f))
+                            Icon(Icons.Filled.AddCircle, null)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismiss) { Text("Done") }
+            }
+        )
+    }
+
+    private suspend fun fetchDevices(): List<Device> = withContext(Dispatchers.IO) {
+        val reqBuilder = Request.Builder()
+            .url("$BASE_URL/device/all")
+            .get()
+
+        TokenManager.accessToken?.let {
+            reqBuilder.addHeader("Authorization", "Bearer $it")
+        }
+
+        val req = reqBuilder.build()
+
+        client.newCall(req).execute().use { res ->
+            if (!res.isSuccessful) return@withContext emptyList()
+            val arr = JSONObject(res.body!!.string())
+                .getJSONObject("data").getJSONArray("devices")
+            List(arr.length()) { i ->
+                arr.getJSONObject(i).run {
+                    Device(
+                        id = getInt("id"),
+                        name = getString("name"),
+                        description = getString("description"),
+                        status = getBoolean("status"),
+                        type = getString("type"),
+                        value = getDouble("value")
+                    )
+                }
+            }
+        }
+    }
+
+    private fun toggleDevice(
+        id: Int,
+        deviceName: String,
+        currentStatus: Boolean,
+        onResult: (String) -> Unit
+    ) {
         val newStatus = !currentStatus
-        val json = JSONObject().apply {
+        val body = JSONObject().apply {
             put("name", deviceName)
             put("status", newStatus)
-        }
-        Log.d("ToggleDevice", "Sending JSON to /device/$id: $json")
-        println("PATCH Payload for /device/$id: $json")
+        }.toString().toRequestBody("application/json".toMediaType())
 
-        val requestBody = json.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url("$BASE_URL/device/$id")
-            .patch(requestBody)
+            .patch(body)
             .addHeader("Content-Type", "application/json")
-            .build()
 
-        client.newCall(request).enqueue(object : Callback {
+        TokenManager.accessToken?.let {
+            reqBuilder.addHeader("Authorization", "Bearer $it")
+        }
+
+        val req = reqBuilder.build()
+
+        client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 onResult("Failed: ${e.message}")
-                Log.e("ToggleDevice", "Request failed", e)
             }
+
             override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    onResult("Device $id updated: ${it.code}")
-                    Log.d("ToggleDevice", "Response: ${it.body?.string()}")
-                }
+                onResult("Device $id updated: ${response.code}")
             }
         })
     }
 }
+
+// ─────────── Robel work end ───────────
