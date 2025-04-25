@@ -34,7 +34,7 @@ data class User(
 )
 
 // Define the BASE_URL for your backend
-const val URL = "http://194.47.40.250:5000"
+const val URL = "http://192.168.0.100:5000"
 
 class UserAuth : ComponentActivity() {
 
