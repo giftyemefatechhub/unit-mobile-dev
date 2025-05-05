@@ -9,7 +9,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,8 +19,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -33,9 +30,10 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONObject
 import java.io.IOException
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
-
 
 // ─────────── Robel work start ───────────
 data class Device(
@@ -47,25 +45,27 @@ data class Device(
     val value: Double
 )
 
-const val BASE_URL  = "http://192.168.0.100:5001"
-private const val REQ_VOICE = 42              // voice recognizer request-code
+const val BASE_URL = "http://192.168.0.32:5001"
+private const val REQ_VOICE = 42
+
+val activityLog = mutableStateListOf<String>()
+
+fun getCurrentTime(): String {
+    return SimpleDateFormat("hh:mm a", Locale.getDefault()).format(Date())
+}
 
 class MainActivity : ComponentActivity() {
 
-    /** latest device list for voice matching */
     private var cachedDevices: List<Device> = emptyList()
 
-    // HTTP client
     private val client: OkHttpClient = OkHttpClient.Builder()
         .addInterceptor(HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }).build()
 
-    // ───────── Voice helpers (Robel) ─────────
     private fun launchVoice() {
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
             putExtra(RecognizerIntent.EXTRA_PROMPT, "Say: device <name> on/off")
         }
@@ -75,41 +75,39 @@ class MainActivity : ComponentActivity() {
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
         if (req != REQ_VOICE || res != Activity.RESULT_OK) return
-        val spoken = data?.getStringArrayListExtra(
-            RecognizerIntent.EXTRA_RESULTS
-        )?.firstOrNull()?.lowercase(Locale.getDefault()) ?: return
+        val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+            ?.firstOrNull()?.lowercase(Locale.getDefault()) ?: return
         Log.d("Voice", "heard → $spoken")
         handleVoice(spoken)
     }
 
     private fun handleVoice(text: String) {
-        // expected:  device <device-name> on|off
         val parts = text.split("\\s+".toRegex()).filter { it.isNotEmpty() }
         if (parts.isEmpty() || parts[0] != "device" || parts.size < 2) return
 
         val desiredStatus = when (parts.last()) {
-            "on"  -> true
+            "on" -> true
             "off" -> false
-            else  -> return
+            else -> return
         }
 
         val spokenName = if (parts.size == 2) "device"
         else parts.subList(1, parts.lastIndex).joinToString(" ")
 
         val key = spokenName.lowercase().replace("\\s+".toRegex(), "")
-        val dev = cachedDevices.firstOrNull { d ->
-            d.name.lowercase().replace("\\s+".toRegex(), "") == key
+        val dev = cachedDevices.firstOrNull {
+            it.name.lowercase().replace("\\s+".toRegex(), "") == key
         } ?: run { Log.d("Voice", "No match for $spokenName"); return }
 
         if (dev.status == desiredStatus) {
-            Log.d("Voice", "${dev.name} already ${if (desiredStatus) "ON" else "OFF"}"); return
+            Log.d("Voice", "${dev.name} already ${if (desiredStatus) "ON" else "OFF"}")
+            return
         }
 
-        Log.d("Voice","Toggling ${dev.name} → ${if (desiredStatus) "ON" else "OFF"}")
+        Log.d("Voice", "Toggling ${dev.name} → ${if (desiredStatus) "ON" else "OFF"}")
         toggleDevice(dev.id, dev.name, dev.status) { Log.d("Voice", it) }
         SocketManager.emitUpdate(dev.name, desiredStatus)
     }
-    // ─────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,43 +117,52 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var darkMode by remember { mutableStateOf(false) }
-            Software_engTheme(darkTheme = darkMode) {
-                // 🔐 Injected login/auth flow (Gifty's logic)
-                var isLoggedIn by remember { mutableStateOf(false) }
+            var isLoggedIn by remember { mutableStateOf(false) }
+            var showActivityLog by remember { mutableStateOf(false) }
 
+            Software_engTheme(darkTheme = darkMode) {
                 if (isLoggedIn) {
-                    DeviceUI(
-                        onLogout      = { isLoggedIn = false },
-                        darkMode      = darkMode,
-                        onToggleTheme = { darkMode = !darkMode }
-                    )
+                    if (showActivityLog) {
+                        ActivityLogScreen { showActivityLog = false }
+                    } else {
+                        DeviceUI(
+                            onLogout = { isLoggedIn = false },
+                            darkMode = darkMode,
+                            onToggleTheme = { darkMode = !darkMode },
+                            onShowActivityLog = { showActivityLog = true }
+                        )
+                    }
                 } else {
-                    AuthScreen { isLoggedIn = true }   // ← Gifty
+                    AuthScreen(
+                        onLoginSuccess = {
+                            isLoggedIn = true
+                            activityLog.add("Logged in at ${getCurrentTime()}")
+                        }
+                    )
                 }
             }
         }
     }
-    // ─────────── (Robel) ───────────
+
     override fun onDestroy() {
         super.onDestroy()
         SocketManager.disconnect()
     }
 
-    // ─────────── UI (Robel) ───────────
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun DeviceUI(
         onLogout: () -> Unit,
         darkMode: Boolean,
-        onToggleTheme: () -> Unit
+        onToggleTheme: () -> Unit,
+        onShowActivityLog: () -> Unit
     ) {
-        var allDevices      by remember { mutableStateOf<List<Device>>(emptyList()) }
+        var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
-        var showAddDialog   by remember { mutableStateOf(false) }
-        var statusMessage   by remember { mutableStateOf("Loading...") }
+        var showAddDialog by remember { mutableStateOf(false) }
+        var statusMessage by remember { mutableStateOf("Loading...") }
         val scope = rememberCoroutineScope()
 
-        // initial fetch + live polling
         LaunchedEffect(Unit) {
             allDevices = fetchDevices().also { cachedDevices = it }
             SocketManager.onUpdate {
@@ -177,16 +184,13 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        // ─────────── (Robel) ───────────
+
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.Home,          // ✅ always present
-                                contentDescription = null
-                            )
+                            Icon(imageVector = Icons.Filled.Home, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
                             Text("Smart-Home")
                         }
@@ -197,6 +201,9 @@ class MainActivity : ComponentActivity() {
                                 if (darkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
                                 contentDescription = "Toggle theme"
                             )
+                        }
+                        IconButton(onClick = onShowActivityLog) {
+                            Icon(Icons.Default.List, "Activity Log")
                         }
                         IconButton(onClick = { showAddDialog = true }) {
                             Icon(Icons.Default.Add, "Add Device")
@@ -211,7 +218,6 @@ class MainActivity : ComponentActivity() {
                 )
             },
             floatingActionButton = {
-                // modern FAB to launch voice directly
                 FloatingActionButton(onClick = { launchVoice() }) {
                     Icon(Icons.Filled.Mic, null)
                 }
@@ -226,16 +232,17 @@ class MainActivity : ComponentActivity() {
             ) {
                 AnimatedVisibility(
                     visible = selectedDevices.isEmpty(),
-                    enter   = fadeIn() + slideInVertically(),
-                    exit    = fadeOut()
+                    enter = fadeIn() + slideInVertically(),
+                    exit = fadeOut()
                 ) {
-                    Text("No devices added. Tap + to add one.",
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold))
+                    Text(
+                        "No devices added. Tap + to add one.",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                    )
                 }
 
                 Spacer(Modifier.height(12.dp))
 
-                // modern list with LazyColumn
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(selectedDevices) { device ->
                         DeviceCard(device = device,
@@ -244,11 +251,11 @@ class MainActivity : ComponentActivity() {
                                     statusMessage = it
                                 }
                                 SocketManager.emitUpdate(toToggle.name, !toToggle.status)
-                                // optimistic UI
                                 selectedDevices = selectedDevices.map {
                                     if (it.id == toToggle.id) it.copy(status = !it.status)
                                     else it
                                 }
+                                activityLog.add("Toggled ${toToggle.name} to ${if (!toToggle.status) "ON" else "OFF"} at ${getCurrentTime()}")
                             })
                     }
                 }
@@ -257,19 +264,17 @@ class MainActivity : ComponentActivity() {
                 Text("Status: $statusMessage")
             }
 
-            // dialog (unchanged)
             if (showAddDialog) {
                 AddDeviceDialog(
-                    allDevices       = allDevices,
-                    selectedDevices  = selectedDevices,
-                    onAdd            = { selectedDevices += it },
-                    onDismiss        = { showAddDialog = false }
+                    allDevices = allDevices,
+                    selectedDevices = selectedDevices,
+                    onAdd = { selectedDevices += it },
+                    onDismiss = { showAddDialog = false }
                 )
             }
         }
     }
 
-    // ─────────── (Robel) ───────────
     @Composable
     private fun DeviceCard(device: Device, onToggle: (Device) -> Unit) {
         val cardColor = if (device.status)
@@ -278,36 +283,37 @@ class MainActivity : ComponentActivity() {
             MaterialTheme.colorScheme.surfaceContainerLow
 
         Card(
-            colors  = CardDefaults.cardColors(containerColor = cardColor),
+            colors = CardDefaults.cardColors(containerColor = cardColor),
             elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-            modifier  = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth()
         ) {
             Row(
                 Modifier
                     .fillMaxWidth()
                     .padding(14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment     = Alignment.CenterVertically
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
                     Text(device.name, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("${device.type} • ${device.value}", style = MaterialTheme.typography.bodySmall)
                 }
 
-                // switch looks more “smart-home” than a plain button
                 Switch(
                     checked = device.status,
                     onCheckedChange = { onToggle(device) },
-                    thumbContent = if (device.status) {
-                        { Icon(Icons.Filled.Check, null, Modifier.size(12.dp)) }
-                    } else {
-                        { Icon(Icons.Filled.Close, null, Modifier.size(12.dp)) }
+                    thumbContent = {
+                        Icon(
+                            if (device.status) Icons.Filled.Check else Icons.Filled.Close,
+                            null,
+                            Modifier.size(12.dp)
+                        )
                     }
                 )
             }
         }
     }
-    // ─────────── (Robel) ───────────
+
     @Composable
     private fun AddDeviceDialog(
         allDevices: List<Device>,
@@ -329,7 +335,7 @@ class MainActivity : ComponentActivity() {
                                 .clickable { onAdd(dev) }
                                 .padding(vertical = 10.dp, horizontal = 6.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment     = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(dev.name, Modifier.weight(1f))
                             Icon(Icons.Filled.AddCircle, null)
@@ -342,11 +348,18 @@ class MainActivity : ComponentActivity() {
             }
         )
     }
-    // ───────────────────────────────────
 
-    // ─────────── network helpers (Robel) ───────────
     private suspend fun fetchDevices(): List<Device> = withContext(Dispatchers.IO) {
-        val req = Request.Builder().url("$BASE_URL/device/all").get().build()
+        val reqBuilder = Request.Builder()
+            .url("$BASE_URL/device/all")
+            .get()
+
+        TokenManager.accessToken?.let {
+            reqBuilder.addHeader("Authorization", "Bearer $it")
+        }
+
+        val req = reqBuilder.build()
+
         client.newCall(req).execute().use { res ->
             if (!res.isSuccessful) return@withContext emptyList()
             val arr = JSONObject(res.body!!.string())
@@ -354,18 +367,18 @@ class MainActivity : ComponentActivity() {
             List(arr.length()) { i ->
                 arr.getJSONObject(i).run {
                     Device(
-                        id    = getInt("id"),
-                        name  = getString("name"),
+                        id = getInt("id"),
+                        name = getString("name"),
                         description = getString("description"),
-                        status      = getBoolean("status"),
-                        type        = getString("type"),
-                        value       = getDouble("value")
+                        status = getBoolean("status"),
+                        type = getString("type"),
+                        value = getDouble("value")
                     )
                 }
             }
         }
     }
-    // ─────────── (Robel) ───────────
+
     private fun toggleDevice(
         id: Int,
         deviceName: String,
@@ -378,20 +391,27 @@ class MainActivity : ComponentActivity() {
             put("status", newStatus)
         }.toString().toRequestBody("application/json".toMediaType())
 
-        val req = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url("$BASE_URL/device/$id")
             .patch(body)
             .addHeader("Content-Type", "application/json")
-            .build()
+
+        TokenManager.accessToken?.let {
+            reqBuilder.addHeader("Authorization", "Bearer $it")
+        }
+
+        val req = reqBuilder.build()
 
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 onResult("Failed: ${e.message}")
             }
+
             override fun onResponse(call: Call, response: Response) {
                 onResult("Device $id updated: ${response.code}")
             }
         })
     }
 }
-// ─────────── Robels work end ───────────
+
+// ─────────── Robel work end ───────────
