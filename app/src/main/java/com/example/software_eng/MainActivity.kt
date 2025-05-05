@@ -220,7 +220,9 @@ class MainActivity : ComponentActivity() {
         // **ADDED**: call backend when query changes
         LaunchedEffect(searchQuery) {
             searchResults = if (searchQuery.isBlank()) emptyList()
-            else searchDevices(searchQuery)
+            else allDevices.filter {
+                it.name.contains(searchQuery, ignoreCase = true)
+            }
         }
 
         Scaffold(
