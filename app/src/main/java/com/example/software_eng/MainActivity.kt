@@ -30,6 +30,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONObject
 import java.io.IOException
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -149,6 +150,34 @@ class MainActivity : ComponentActivity() {
         SocketManager.disconnect()
     }
 
+    // **ADDED**: suspend function to query backend search endpoint
+    private suspend fun searchDevices(query: String): List<Device> = withContext(Dispatchers.IO) {
+        val url = "$BASE_URL/device/search?q=${URLEncoder.encode(query, "UTF-8")}"
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .get()
+        TokenManager.accessToken?.let {
+            reqBuilder.addHeader("Authorization", "Bearer $it")
+        }
+        client.newCall(reqBuilder.build()).execute().use { res ->
+            if (!res.isSuccessful) return@withContext emptyList()
+            val arr = JSONObject(res.body!!.string())
+                .getJSONObject("data").getJSONArray("devices")
+            List(arr.length()) { i ->
+                arr.getJSONObject(i).run {
+                    Device(
+                        id = getInt("id"),
+                        name = getString("name"),
+                        description = getString("description"),
+                        status = getBoolean("status"),
+                        type = getString("type"),
+                        value = getDouble("value")
+                    )
+                }
+            }
+        }
+    }
+
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun DeviceUI(
@@ -157,6 +186,10 @@ class MainActivity : ComponentActivity() {
         onToggleTheme: () -> Unit,
         onShowActivityLog: () -> Unit
     ) {
+        // **ADDED**: new state to hold backend search results
+        var searchQuery by remember { mutableStateOf("") }
+        var searchResults by remember { mutableStateOf<List<Device>>(emptyList()) }
+
         var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var showAddDialog by remember { mutableStateOf(false) }
@@ -183,6 +216,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+        // **ADDED**: call backend when query changes
+        LaunchedEffect(searchQuery) {
+            searchResults = if (searchQuery.isBlank()) emptyList()
+            else searchDevices(searchQuery)
         }
 
         Scaffold(
@@ -230,6 +268,21 @@ class MainActivity : ComponentActivity() {
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
+                // Search Bar UI (from UI commit)
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = "Search icon")
+                    },
+                    placeholder = { Text("Search devices…") }
+                )
+
+                Spacer(Modifier.height(12.dp))
+
                 AnimatedVisibility(
                     visible = selectedDevices.isEmpty(),
                     enter = fadeIn() + slideInVertically(),
@@ -243,8 +296,12 @@ class MainActivity : ComponentActivity() {
 
                 Spacer(Modifier.height(12.dp))
 
+                // **ADDED**: switch between the full list and search results
+                val displayed = if (searchQuery.isBlank()) selectedDevices
+                else searchResults
+
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(selectedDevices) { device ->
+                    items(displayed) { device ->
                         DeviceCard(device = device,
                             onToggle = { toToggle ->
                                 toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
