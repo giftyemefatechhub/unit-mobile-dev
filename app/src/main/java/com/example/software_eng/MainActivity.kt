@@ -255,7 +255,10 @@ class MainActivity : ComponentActivity() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Filled.Home, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Smart-Home")
+                            Text("Home-Sync",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     },
                     actions = {
