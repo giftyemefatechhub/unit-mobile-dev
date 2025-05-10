@@ -44,6 +44,23 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core.v350)
     androidTestImplementation(libs.ui.test.junit4)
     testImplementation(libs.junit)
+    androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")
+
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    configurations.all {
+        resolutionStrategy.eachDependency {
+            if (requested.group == "androidx.test.ext" && requested.name == "junit") {
+                useVersion("1.1.5")
+            }
+            if (requested.group == "androidx.test.espresso" && requested.name == "espresso-core") {
+                useVersion("3.5.0")
+            }
+        }
+    }
+
+
 
 
     implementation(libs.androidx.core.ktx)
