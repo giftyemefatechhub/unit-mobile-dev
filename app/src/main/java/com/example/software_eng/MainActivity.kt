@@ -118,28 +118,45 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var darkMode by remember { mutableStateOf(false) }
-            var isLoggedIn by remember { mutableStateOf(false) }
-            var showActivityLog by remember { mutableStateOf(false) }
+            var showDashboard by remember { mutableStateOf(true) } // Gifty's work
 
             Software_engTheme(darkTheme = darkMode) {
-                if (isLoggedIn) {
-                    if (showActivityLog) {
-                        ActivityLogScreen { showActivityLog = false }
-                    } else {
-                        DeviceUI(
-                            onLogout = { isLoggedIn = false },
-                            darkMode = darkMode,
-                            onToggleTheme = { darkMode = !darkMode },
-                            onShowActivityLog = { showActivityLog = true }
-                        )
-                    }
-                } else {
-                    AuthScreen(
-                        onLoginSuccess = {
-                            isLoggedIn = true
-                            activityLog.add("Logged in at ${getCurrentTime()}")
+                if (showDashboard) {
+                    HomeScreen(
+                        onLoginClick = {
+                            showDashboard = false
+                        },
+                        onRegisterClick = {
+                            showDashboard = false
                         }
                     )
+                } else {
+                    var isLoggedIn by remember { mutableStateOf(false) }
+                    var showActivityLog by remember { mutableStateOf(false) }
+
+                    if (isLoggedIn) {
+                        if (showActivityLog) {
+                            ActivityLogScreen { showActivityLog = false }
+                        } else {
+                            DeviceUI(
+                                onLogout = {
+                                    isLoggedIn = false
+                                    showDashboard = true // Gifty's enhancement: return to HomeScreen on logout
+                                },
+                                darkMode = darkMode,
+                                onToggleTheme = { darkMode = !darkMode },
+                                onShowActivityLog = { showActivityLog = true }
+                            )
+
+                        }
+                    } else {
+                        AuthScreen(
+                            onLoginSuccess = {
+                                isLoggedIn = true
+                                activityLog.add("Logged in at ${getCurrentTime()}")
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -150,7 +167,13 @@ class MainActivity : ComponentActivity() {
         SocketManager.disconnect()
     }
 
-    // **ADDED**: suspend function to query backend search endpoint
+    // keep rest of the methods and composables unchanged
+
+
+// ─────────── Robel work end ───────────
+
+
+// **ADDED**: suspend function to query backend search endpoint
     private suspend fun searchDevices(query: String): List<Device> = withContext(Dispatchers.IO) {
         val url = "$BASE_URL/device/search?q=${URLEncoder.encode(query, "UTF-8")}"
         val reqBuilder = Request.Builder()
@@ -232,7 +255,10 @@ class MainActivity : ComponentActivity() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Filled.Home, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Smart-Home")
+                            Text("Home-Sync",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     },
                     actions = {
