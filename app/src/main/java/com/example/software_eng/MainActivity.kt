@@ -357,7 +357,8 @@ class MainActivity : ComponentActivity() {
 
                 LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     items(displayed) { device ->
-                        DeviceCard(device = device,
+                        DeviceCard(
+                            device = device,
                             onToggle = { toToggle ->
                                 toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
                                     statusMessage = it
@@ -368,7 +369,12 @@ class MainActivity : ComponentActivity() {
                                     else it
                                 }
                                 activityLog.add("Toggled ${toToggle.name} to ${if (!toToggle.status) "ON" else "OFF"} at ${getCurrentTime()}")
-                            })
+                            },
+                            onRemove = { toRemove ->
+                                selectedDevices = selectedDevices.filterNot { it.id == toRemove.id }
+                                activityLog.add("Removed ${toRemove.name} at ${getCurrentTime()}")
+                            }
+                        )
                     }
                 }
 
@@ -388,7 +394,11 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun DeviceCard(device: Device, onToggle: (Device) -> Unit) {
+    private fun DeviceCard(
+        device: Device,
+        onToggle: (Device) -> Unit,
+        onRemove: (Device) -> Unit // <- added
+    ) {
         val cardColor = if (device.status)
             MaterialTheme.colorScheme.primaryContainer
         else
@@ -411,20 +421,26 @@ class MainActivity : ComponentActivity() {
                     Text("${device.type} • ${device.value}", style = MaterialTheme.typography.bodySmall)
                 }
 
-                Switch(
-                    checked = device.status,
-                    onCheckedChange = { onToggle(device) },
-                    thumbContent = {
-                        Icon(
-                            if (device.status) Icons.Filled.Check else Icons.Filled.Close,
-                            null,
-                            Modifier.size(12.dp)
-                        )
+                Column(horizontalAlignment = Alignment.End) {
+                    Switch(
+                        checked = device.status,
+                        onCheckedChange = { onToggle(device) },
+                        thumbContent = {
+                            Icon(
+                                if (device.status) Icons.Filled.Check else Icons.Filled.Close,
+                                null,
+                                Modifier.size(12.dp)
+                            )
+                        }
+                    )
+                    TextButton(onClick = { onRemove(device) }) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
                     }
-                )
+                }
             }
         }
     }
+
 
     @Composable
     private fun AddDeviceDialog(
