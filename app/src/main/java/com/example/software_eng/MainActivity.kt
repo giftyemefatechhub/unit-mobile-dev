@@ -46,7 +46,7 @@ data class Device(
     val value: Double
 )
 
-const val BASE_URL = "http://192.168.0.32:5001"
+const val BASE_URL = "http://192.168.0.100:32768"
 private const val REQ_VOICE = 42
 
 val activityLog = mutableStateListOf<String>()
@@ -83,32 +83,59 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleVoice(text: String) {
-        val parts = text.split("\\s+".toRegex()).filter { it.isNotEmpty() }
-        if (parts.isEmpty() || parts[0] != "device" || parts.size < 2) return
+        val parts = text.lowercase(Locale.getDefault()).split("\\s+".toRegex()).filter { it.isNotEmpty() }
+
+        if (parts.size < 2) {
+            Log.d("Voice", "Not enough words: $text")
+            return
+        }
 
         val desiredStatus = when (parts.last()) {
             "on" -> true
             "off" -> false
-            else -> return
+            else -> {
+                Log.d("Voice", "No status command (on/off) found in: $text")
+                return
+            }
         }
 
-        val spokenName = if (parts.size == 2) "device"
-        else parts.subList(1, parts.lastIndex).joinToString(" ")
+        // Device name handling (two-word or one-word input)
+        val spokenName = if (parts.size >= 3)
+            parts.subList(0, parts.lastIndex).joinToString(" ")
+        else
+            parts[0]
 
-        val key = spokenName.lowercase().replace("\\s+".toRegex(), "")
+        val cleanedSpoken = spokenName
+            .replace("_", "")    // remove underscores (if spoken)
+            .replace("\\s+".toRegex(), "") // remove spaces
+            .lowercase(Locale.getDefault())
+
+        Log.d("Voice", "Looking for device matching: $cleanedSpoken")
+
         val dev = cachedDevices.firstOrNull {
-            it.name.lowercase().replace("\\s+".toRegex(), "") == key
-        } ?: run { Log.d("Voice", "No match for $spokenName"); return }
+            it.name
+                .replace("_", "")   // remove underscores from device name
+                .replace("\\s+".toRegex(), "") // remove any accidental spaces
+                .lowercase(Locale.getDefault()) == cleanedSpoken
+        }
+
+        if (dev == null) {
+            Log.d("Voice", "No match found for: $cleanedSpoken")
+            return
+        }
 
         if (dev.status == desiredStatus) {
             Log.d("Voice", "${dev.name} already ${if (desiredStatus) "ON" else "OFF"}")
             return
         }
 
-        Log.d("Voice", "Toggling ${dev.name} → ${if (desiredStatus) "ON" else "OFF"}")
-        toggleDevice(dev.id, dev.name, dev.status) { Log.d("Voice", it) }
+        Log.d("Voice", "Toggling ${dev.name} to ${if (desiredStatus) "ON" else "OFF"}")
+        toggleDevice(dev.id, dev.name, dev.status) {
+            Log.d("Voice", it)
+        }
         SocketManager.emitUpdate(dev.name, desiredStatus)
     }
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
