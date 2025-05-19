@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.sp
 import com.example.software_eng.ui.theme.Software_engTheme
 import kotlinx.coroutines.*
 import okhttp3.*
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.logging.HttpLoggingInterceptor
@@ -45,8 +48,12 @@ data class Device(
     val type: String,
     val value: Double
 )
+<<<<<<< HEAD
 
-const val BASE_URL = "http://192.168.0.100:32768"
+=======
+//const val BASE_URL = "http://19.47.40.195:5001"
+const val BASE_URL = "http://192.168.0.32:5001"
+>>>>>>> 4f8787f (Added JWT refresh handling and improved auth reliability)
 private const val REQ_VOICE = 42
 
 val activityLog = mutableStateListOf<String>()
@@ -59,7 +66,21 @@ class MainActivity : ComponentActivity() {
 
     private var cachedDevices: List<Device> = emptyList()
 
+    // --- New: Cookie support for refresh token ---
+    private val cookieJar = object : CookieJar {
+        private val cookieStore = mutableMapOf<String, List<Cookie>>()
+
+        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+            cookieStore[url.host] = cookies
+        }
+
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            return cookieStore[url.host] ?: emptyList()
+        }
+    }
+
     private val client: OkHttpClient = OkHttpClient.Builder()
+        .cookieJar(cookieJar) // <-- Add cookie support
         .addInterceptor(HttpLoggingInterceptor().apply {
             level = HttpLoggingInterceptor.Level.BODY
         }).build()
@@ -194,7 +215,7 @@ class MainActivity : ComponentActivity() {
         SocketManager.disconnect()
     }
 
-    // keep rest of the methods and composables unchanged
+
 
 
 // ─────────── Robel work end ───────────

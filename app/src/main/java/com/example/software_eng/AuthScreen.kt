@@ -19,10 +19,70 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.IOException
+
 // done by me - Gifty
+
 // ─────────── Token Manager ───────────
 object TokenManager {
     var accessToken: String? = null
+
+    fun refreshAccessToken(onResult: (Boolean) -> Unit) {
+        val client = OkHttpClient.Builder()
+            .cookieJar(object : CookieJar {
+                private val cookieStore = mutableMapOf<HttpUrl, List<Cookie>>()
+
+                override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                    cookieStore[url] = cookies
+                }
+
+                override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                    return cookieStore[url] ?: emptyList()
+                }
+            }).build()
+
+        val request = Request.Builder()
+            .url("$BASE_URL/user/token")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .addHeader("Content-Type", "application/json")
+            .build()
+
+        client.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                println("Refresh token failed: ${e.message}")
+                onResult(false)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val responseBody = response.body?.string()
+                println("REFRESH RESPONSE → ${response.code} :: $responseBody")
+
+                if (!response.isSuccessful || responseBody == null) {
+                    onResult(false)
+                    return
+                }
+
+                try {
+                    val token = JSONObject(responseBody)
+                        .getJSONObject("data")
+                        .getString("accessToken")
+
+                    accessToken = token
+                    println("Token refreshed successfully")
+                    onResult(true)
+                } catch (e: Exception) {
+                    println("Failed to parse refresh response: ${e.message}")
+                    onResult(false)
+                }
+            }
+        })
+    }
+
+    fun Request.Builder.addAuthHeader(): Request.Builder {
+        accessToken?.let {
+            this.addHeader("Authorization", "Bearer $it")
+        }
+        return this
+    }
 }
 
 // ─────────── Color Palette ───────────
@@ -108,7 +168,7 @@ fun AuthScreen(
                         loginUser(username, password) { success, result ->
                             if (success) {
                                 onLoginSuccess()
-                                message = "Login success 🎉"
+                                message = "Login success"
                             } else {
                                 message = result ?: "Login failed"
                             }
