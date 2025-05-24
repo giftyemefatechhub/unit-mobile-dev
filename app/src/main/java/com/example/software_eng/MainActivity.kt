@@ -48,12 +48,11 @@ data class Device(
     val type: String,
     val value: Double
 )
-<<<<<<< HEAD
 
-=======
+
+
 //const val BASE_URL = "http://19.47.40.195:5001"
 const val BASE_URL = "http://192.168.0.32:5001"
->>>>>>> 4f8787f (Added JWT refresh handling and improved auth reliability)
 private const val REQ_VOICE = 42
 
 val activityLog = mutableStateListOf<String>()
