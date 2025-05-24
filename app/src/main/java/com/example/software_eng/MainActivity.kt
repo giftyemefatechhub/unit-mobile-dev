@@ -39,6 +39,9 @@ import java.util.Date
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
 import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 
 // ─────────── Robel work start ───────────
@@ -167,8 +170,43 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var darkMode by remember { mutableStateOf(false) }
-            var showDashboard by remember { mutableStateOf(true) } // Gifty's work
+            var showDashboard by remember { mutableStateOf(true) }
             var authIsLogin by remember { mutableStateOf(true) }
+            var isLoggedIn by remember { mutableStateOf(false) }
+            var logoutJob by remember { mutableStateOf<Job?>(null) }
+
+            val lifecycleOwner = LocalLifecycleOwner.current
+
+            // Auto logout logic
+            DisposableEffect(Unit) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_STOP -> {
+                            if (isLoggedIn) {
+                                logoutJob = CoroutineScope(Dispatchers.Main).launch {
+                                    delay(5 * 60 * 1000) // 5 minutes
+                                    isLoggedIn = false
+                                    showDashboard = true
+                                    activityLog.add("Auto-logged out due to inactivity at ${getCurrentTime()}")
+                                }
+                            }
+                        }
+
+                        Lifecycle.Event.ON_START -> {
+                            logoutJob?.cancel()
+                            logoutJob = null
+                        }
+
+                        else -> Unit
+                    }
+                }
+
+                lifecycleOwner.lifecycle.addObserver(observer)
+
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
 
             Software_engTheme(darkTheme = darkMode) {
                 if (showDashboard) {
