@@ -38,6 +38,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
+import androidx.activity.compose.BackHandler
+
 
 // ─────────── Robel work start ───────────
 data class Device(
@@ -188,18 +190,26 @@ class MainActivity : ComponentActivity() {
                         if (showActivityLog) {
                             ActivityLogScreen { showActivityLog = false }
                         } else {
+                            BackHandler {
+                                isLoggedIn = false
+                                showDashboard = true
+                            }
+
                             DeviceUI(
                                 onLogout = {
                                     isLoggedIn = false
-                                    showDashboard = true // Gifty's enhancement: return to HomeScreen on logout
+                                    showDashboard = true
                                 },
                                 darkMode = darkMode,
                                 onToggleTheme = { darkMode = !darkMode },
                                 onShowActivityLog = { showActivityLog = true }
                             )
-
                         }
                     } else {
+                        BackHandler {
+                            // Go back to HomeScreen when back is pressed
+                            showDashboard = true
+                        }
                         AuthScreen(
                             onLoginSuccess = {
                                 isLoggedIn = true
