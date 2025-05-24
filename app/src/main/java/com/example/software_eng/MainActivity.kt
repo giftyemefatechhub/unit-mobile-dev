@@ -38,6 +38,10 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.time.Duration.Companion.seconds
+import androidx.activity.compose.BackHandler
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 // ─────────── Robel work start ───────────
 data class Device(
@@ -48,12 +52,8 @@ data class Device(
     val type: String,
     val value: Double
 )
-<<<<<<< HEAD
 
-=======
-//const val BASE_URL = "http://19.47.40.195:5001"
 const val BASE_URL = "http://192.168.0.32:5001"
->>>>>>> 4f8787f (Added JWT refresh handling and improved auth reliability)
 private const val REQ_VOICE = 42
 
 val activityLog = mutableStateListOf<String>()
@@ -96,7 +96,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onActivityResult(req: Int, res: Int, data: Intent?) {
         super.onActivityResult(req, res, data)
-        if (req != REQ_VOICE || res != Activity.RESULT_OK) return
+        if (req != REQ_VOICE || res != RESULT_OK) return
         val spoken = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
             ?.firstOrNull()?.lowercase(Locale.getDefault()) ?: return
         Log.d("Voice", "heard → $spoken")
@@ -157,7 +157,6 @@ class MainActivity : ComponentActivity() {
         SocketManager.emitUpdate(dev.name, desiredStatus)
     }
 
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -166,15 +165,53 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             var darkMode by remember { mutableStateOf(false) }
-            var showDashboard by remember { mutableStateOf(true) } // Gifty's work
+            var showDashboard by remember { mutableStateOf(true) }
+            var authIsLogin by remember { mutableStateOf(true) }
+            var isLoggedIn by remember { mutableStateOf(false) }
+            var logoutJob by remember { mutableStateOf<Job?>(null) }
+
+            val lifecycleOwner = LocalLifecycleOwner.current
+
+            // Auto logout logic
+            DisposableEffect(Unit) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_STOP -> {
+                            if (isLoggedIn) {
+                                logoutJob = CoroutineScope(Dispatchers.Main).launch {
+                                    delay(5 * 60 * 1000) // 5 minutes
+                                    isLoggedIn = false
+                                    showDashboard = true
+                                    activityLog.add("Auto-logged out due to inactivity at ${getCurrentTime()}")
+                                }
+                            }
+                        }
+
+                        Lifecycle.Event.ON_START -> {
+                            logoutJob?.cancel()
+                            logoutJob = null
+                        }
+
+                        else -> Unit
+                    }
+                }
+
+                lifecycleOwner.lifecycle.addObserver(observer)
+
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                }
+            }
 
             Software_engTheme(darkTheme = darkMode) {
                 if (showDashboard) {
                     HomeScreen(
                         onLoginClick = {
+                            authIsLogin = true   // ← Set to login mode
                             showDashboard = false
                         },
                         onRegisterClick = {
+                            authIsLogin = false  // ← Set to register mode
                             showDashboard = false
                         }
                     )
@@ -186,23 +223,32 @@ class MainActivity : ComponentActivity() {
                         if (showActivityLog) {
                             ActivityLogScreen { showActivityLog = false }
                         } else {
+                            BackHandler {
+                                isLoggedIn = false
+                                showDashboard = true
+                            }
+
                             DeviceUI(
                                 onLogout = {
                                     isLoggedIn = false
-                                    showDashboard = true // Gifty's enhancement: return to HomeScreen on logout
+                                    showDashboard = true
                                 },
                                 darkMode = darkMode,
                                 onToggleTheme = { darkMode = !darkMode },
                                 onShowActivityLog = { showActivityLog = true }
                             )
-
                         }
                     } else {
+                        BackHandler {
+                            // Go back to HomeScreen when back is pressed
+                            showDashboard = true
+                        }
                         AuthScreen(
                             onLoginSuccess = {
                                 isLoggedIn = true
                                 activityLog.add("Logged in at ${getCurrentTime()}")
-                            }
+                            },
+                            initialIsLogin = authIsLogin // ← Add this
                         )
                     }
                 }
@@ -215,13 +261,9 @@ class MainActivity : ComponentActivity() {
         SocketManager.disconnect()
     }
 
+    // ─────────── Robel work end ───────────
 
-
-
-// ─────────── Robel work end ───────────
-
-
-// **ADDED**: suspend function to query backend search endpoint
+    // **ADDED**: suspend function to query backend search endpoint
     private suspend fun searchDevices(query: String): List<Device> = withContext(Dispatchers.IO) {
         val url = "$BASE_URL/device/search?q=${URLEncoder.encode(query, "UTF-8")}"
         val reqBuilder = Request.Builder()
@@ -257,13 +299,12 @@ class MainActivity : ComponentActivity() {
         onToggleTheme: () -> Unit,
         onShowActivityLog: () -> Unit
     ) {
-        // **ADDED**: new state to hold backend search results
+        var showProfileScreen by remember { mutableStateOf(false) }
+        var showAddDialog by remember { mutableStateOf(false) } // Define the variable here
         var searchQuery by remember { mutableStateOf("") }
         var searchResults by remember { mutableStateOf<List<Device>>(emptyList()) }
-
         var allDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
         var selectedDevices by remember { mutableStateOf<List<Device>>(emptyList()) }
-        var showAddDialog by remember { mutableStateOf(false) }
         var statusMessage by remember { mutableStateOf("Loading...") }
         val scope = rememberCoroutineScope()
 
@@ -288,6 +329,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+
         // **ADDED**: call backend when query changes
         LaunchedEffect(searchQuery) {
             searchResults = if (searchQuery.isBlank()) emptyList()
@@ -303,10 +345,7 @@ class MainActivity : ComponentActivity() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Filled.Home, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Home-Sync",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                            Text("Home-Sync", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                         }
                     },
                     actions = {
@@ -319,8 +358,11 @@ class MainActivity : ComponentActivity() {
                         IconButton(onClick = onShowActivityLog) {
                             Icon(Icons.Default.List, "Activity Log")
                         }
+                        IconButton(onClick = { showProfileScreen = true }) {
+                            Icon(Icons.Default.AccountCircle, "Profile")
+                        }
                         IconButton(onClick = { showAddDialog = true }) {
-                            Icon(Icons.Default.Add, "Add Device")
+                            Icon(Icons.Default.Add, "Add Device") // This is the Add Device button
                         }
                         OutlinedButton(
                             onClick = onLogout,
@@ -344,63 +386,79 @@ class MainActivity : ComponentActivity() {
                     .padding(paddingValues)
                     .padding(16.dp)
             ) {
-                // Search Bar UI (from UI commit)
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    leadingIcon = {
-                        Icon(Icons.Default.Search, contentDescription = "Search icon")
-                    },
-                    placeholder = { Text("Search devices…") }
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                AnimatedVisibility(
-                    visible = selectedDevices.isEmpty(),
-                    enter = fadeIn() + slideInVertically(),
-                    exit = fadeOut()
-                ) {
-                    Text(
-                        "No devices added. Tap + to add one.",
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
+                if (showProfileScreen) {
+                    // Show Profile Screen
+                    ProfileScreen(
+                        userId = 1, // Replace with actual user ID
+                        onProfileUpdateSuccess = {
+                            // Handle profile update success
+                            showProfileScreen = false
+                        },
+                        onError = { errorMessage ->
+                            // Handle error
+                            showProfileScreen = false
+                        },
+                        usernameInitial = " ", // Pass the usernameInitial value here
+                        emailInitial = " " // Pass the initial email value
                     )
-                }
+                } else {
+                    // Search Bar UI
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        leadingIcon = {
+                            Icon(Icons.Default.Search, contentDescription = "Search icon")
+                        },
+                        placeholder = { Text("Search devices…") }
+                    )
 
-                Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(12.dp))
 
-                // **ADDED**: switch between the full list and search results
-                val displayed = if (searchQuery.isBlank()) selectedDevices
-                else searchResults
-
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(displayed) { device ->
-                        DeviceCard(
-                            device = device,
-                            onToggle = { toToggle ->
-                                toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
-                                    statusMessage = it
-                                }
-                                SocketManager.emitUpdate(toToggle.name, !toToggle.status)
-                                selectedDevices = selectedDevices.map {
-                                    if (it.id == toToggle.id) it.copy(status = !it.status)
-                                    else it
-                                }
-                                activityLog.add("Toggled ${toToggle.name} to ${if (!toToggle.status) "ON" else "OFF"} at ${getCurrentTime()}")
-                            },
-                            onRemove = { toRemove ->
-                                selectedDevices = selectedDevices.filterNot { it.id == toRemove.id }
-                                activityLog.add("Removed ${toRemove.name} at ${getCurrentTime()}")
-                            }
+                    AnimatedVisibility(
+                        visible = selectedDevices.isEmpty(),
+                        enter = fadeIn() + slideInVertically(),
+                        exit = fadeOut()
+                    ) {
+                        Text(
+                            "No devices added. Tap + to add one.",
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold)
                         )
                     }
-                }
 
-                Spacer(Modifier.height(12.dp))
-                Text("Status: $statusMessage")
+                    Spacer(Modifier.height(12.dp))
+
+                    val displayed = if (searchQuery.isBlank()) selectedDevices
+                    else searchResults
+
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(displayed) { device ->
+                            DeviceCard(
+                                device = device,
+                                onToggle = { toToggle ->
+                                    toggleDevice(toToggle.id, toToggle.name, toToggle.status) {
+                                        statusMessage = it
+                                    }
+                                    SocketManager.emitUpdate(toToggle.name, !toToggle.status)
+                                    selectedDevices = selectedDevices.map {
+                                        if (it.id == toToggle.id) it.copy(status = !it.status)
+                                        else it
+                                    }
+                                    activityLog.add("Toggled ${toToggle.name} to ${if (!toToggle.status) "ON" else "OFF"} at ${getCurrentTime()}")
+                                },
+                                onRemove = { toRemove ->
+                                    selectedDevices = selectedDevices.filterNot { it.id == toRemove.id }
+                                    activityLog.add("Removed ${toRemove.name} at ${getCurrentTime()}")
+                                }
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Text("Status: $statusMessage")
+                }
             }
 
             if (showAddDialog) {
@@ -461,7 +519,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
 
     @Composable
     private fun AddDeviceDialog(
@@ -562,5 +619,3 @@ class MainActivity : ComponentActivity() {
         })
     }
 }
-
-// ─────────── Robel work end ───────────

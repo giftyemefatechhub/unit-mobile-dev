@@ -16,6 +16,7 @@ object SocketManager {
         try {
             //IP here to change to IP of host server
             //socket = IO.socket("http://19.47.40.195:5001")
+            //socket = IO.socket("http://194.47.40.130:5001")
             socket = IO.socket("http://192.168.0.32:5001")
             socket.on(Socket.EVENT_CONNECT) {
                 //just checking to make sure its working right in the logcat
