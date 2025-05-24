@@ -52,7 +52,7 @@ data class Device(
 
 
 //const val BASE_URL = "http://19.47.40.195:5001"
-const val BASE_URL = "http://192.168.0.32:5001"
+const val BASE_URL = "http://192.168.0.100:32768"
 private const val REQ_VOICE = 42
 
 val activityLog = mutableStateListOf<String>()
@@ -166,14 +166,17 @@ class MainActivity : ComponentActivity() {
         setContent {
             var darkMode by remember { mutableStateOf(false) }
             var showDashboard by remember { mutableStateOf(true) } // Gifty's work
+            var authIsLogin by remember { mutableStateOf(true) }
 
             Software_engTheme(darkTheme = darkMode) {
                 if (showDashboard) {
                     HomeScreen(
                         onLoginClick = {
+                            authIsLogin = true   // ← Set to login mode
                             showDashboard = false
                         },
                         onRegisterClick = {
+                            authIsLogin = false  // ← Set to register mode
                             showDashboard = false
                         }
                     )
@@ -201,7 +204,8 @@ class MainActivity : ComponentActivity() {
                             onLoginSuccess = {
                                 isLoggedIn = true
                                 activityLog.add("Logged in at ${getCurrentTime()}")
-                            }
+                            },
+                            initialIsLogin = authIsLogin // ← Add this
                         )
                     }
                 }

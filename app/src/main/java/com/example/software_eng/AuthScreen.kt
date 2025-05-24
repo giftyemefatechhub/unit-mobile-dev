@@ -93,9 +93,11 @@ private val White = Color.White
 // ─────────── Auth UI ───────────
 @Composable
 fun AuthScreen(
-    onLoginSuccess: () -> Unit
-) {
-    var isLogin by remember { mutableStateOf(true) }
+    onLoginSuccess: () -> Unit,
+    initialIsLogin: Boolean = true
+)
+ {
+    var isLogin by remember { mutableStateOf(initialIsLogin) }
     var username by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
